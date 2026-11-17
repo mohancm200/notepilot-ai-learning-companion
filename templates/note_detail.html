@@ -1,0 +1,191 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ note.title }} | NotePilot</title>
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: #101426;
+            color: #f5f6ff;
+            min-height: 100vh;
+            padding: 30px 20px;
+        }
+
+        .container {
+            max-width: 1050px;
+            margin: auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            font-size: 30px;
+            font-weight: bold;
+            color: #a78bfa;
+        }
+
+        .back {
+            color: #c4b5fd;
+            text-decoration: none;
+        }
+
+        .back:hover {
+            color: white;
+        }
+
+        .card {
+            background: #1b223b;
+            border: 1px solid #343d5c;
+            border-radius: 15px;
+            padding: 30px;
+            margin-bottom: 22px;
+        }
+
+        h1 {
+            font-size: 28px;
+            margin-bottom: 12px;
+            overflow-wrap: anywhere;
+        }
+
+        h2 {
+            color: #b9a2ff;
+            font-size: 21px;
+            margin-bottom: 16px;
+        }
+
+        .date {
+            color: #a8b0cc;
+            font-size: 13px;
+            margin-bottom: 25px;
+        }
+
+        .summary {
+            line-height: 1.8;
+            font-size: 16px;
+            white-space: pre-wrap;
+        }
+
+        ul {
+            padding-left: 25px;
+            line-height: 1.9;
+        }
+
+        li {
+            margin-bottom: 10px;
+        }
+
+        .source {
+            background: #141a2d;
+            padding: 20px;
+            border-radius: 10px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .empty {
+            color: #a8b0cc;
+        }
+
+        .footer {
+            text-align: center;
+            color: #858eac;
+            margin-top: 30px;
+            font-size: 13px;
+        }
+
+        @media (max-width: 600px) {
+            .card {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 23px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <header>
+        <div class="logo">NotePilot</div>
+        <a href="{{ url_for('notes') }}" class="back">
+            ← Back to My Notes
+        </a>
+    </header>
+
+    <section class="card">
+        <h1>{{ note.title }}</h1>
+
+        <p class="date">
+            Created:
+            {{ note.created_at.strftime('%d %B %Y, %I:%M %p') if note.created_at else 'Date unavailable' }}
+        </p>
+
+        <h2>AI Summary</h2>
+
+        <p class="summary">{{ note.summary or 'No summary available.' }}</p>
+    </section>
+
+    <section class="card">
+        <h2>Key Points</h2>
+
+        {% if note.key_points %}
+            <ul>
+                {% for point in note.key_points %}
+                    <li>{{ point }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="empty">No key points available.</p>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <h2>Action Items</h2>
+
+        {% if note.action_items %}
+            <ul>
+                {% for item in note.action_items %}
+                    <li>{{ item }}</li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="empty">No action items available.</p>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <h2>Original Study Material</h2>
+
+        <div class="source">{{ note.source_text or 'No original material available.' }}</div>
+    </section>
+
+    <div class="footer">
+        Generated and saved with NotePilot AI Learning Companion
+    </div>
+
+</div>
+
+</body>
+</html>
