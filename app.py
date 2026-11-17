@@ -1,12 +1,11 @@
 
-import logging
 import os
+import logging
 from datetime import datetime, timezone
 
-import mysql.connector
 from dotenv import load_dotenv
 from flask import Flask, jsonify
-from mysql.connector import Error
+from db import get_db_connection
 
 load_dotenv()
 
@@ -16,15 +15,6 @@ app.config["SECRET_KEY"] = os.getenv(
     "SECRET_KEY",
     "development-key-change-before-deployment"
 )
-
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST", "127.0.0.1"),
-    "port": int(os.getenv("DB_PORT", "3306")),
-    "user": os.getenv("DB_USER", "root"),
-    "password": os.getenv("DB_PASSWORD", ""),
-    "database": os.getenv("DB_NAME", "notepilot_db"),
-    "connection_timeout": 5
-}
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,6 +30,7 @@ def home():
         <title>NotePilot | AI Learning Companion</title>
         <style>
             * { box-sizing: border-box; }
+
             body {
                 margin: 0;
                 min-height: 100vh;
@@ -49,6 +40,7 @@ def home():
                 background: #101426;
                 color: #f4f5fb;
             }
+
             main {
                 width: min(620px, 90%);
                 padding: 40px;
@@ -56,6 +48,7 @@ def home():
                 border-radius: 20px;
                 background: #1a2038;
             }
+
             h1 { color: #a99bff; font-size: 36px; }
             p { color: #d1d5e5; line-height: 1.7; }
             a { color: #c6bdff; margin-right: 16px; }
@@ -86,31 +79,29 @@ def health_check():
 @app.get("/db-check")
 def database_check():
     connection = None
-    cursor = None
 
     try:
-        connection = mysql.connector.connect(**DB_CONFIG)
-        cursor = connection.cursor()
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
+        connection = get_db_connection()
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT DATABASE() AS database_name")
+            result = cursor.fetchone()
 
         return jsonify(
             status="connected",
-            database=DB_CONFIG["database"]
+            database=result["database_name"]
         ), 200
 
-    except Error:
-        app.logger.exception("MySQL connection check failed")
+    except Exception:
+        app.logger.exception("Database connection failed")
+
         return jsonify(
             status="not_connected",
             message="Check MySQL and database configuration."
         ), 503
 
     finally:
-        if cursor is not None:
-            cursor.close()
-
-        if connection is not None and connection.is_connected():
+        if connection is not None:
             connection.close()
 
 
@@ -118,5 +109,6 @@ if __name__ == "__main__":
     app.run(
         host="127.0.0.1",
         port=int(os.getenv("PORT", "5000")),
-        debug=os.getenv("FLASK_DEBUG", "1").lower() in {"1", "true", "yes"}
+        debug=os.getenv("FLASK_DEBUG", "1").lower()
+        in {"1", "true", "yes"}
     )
