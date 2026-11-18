@@ -9,31 +9,36 @@ import socket
 from datetime import datetime, timezone
 from functools import wraps
 
+from dotenv import load_dotenv
 from flask import (
     Flask,
+    jsonify,
     render_template,
-    request,
+    session,
     redirect,
     url_for,
-    session,
-    flash,
-    jsonify
+    request,
+    flash
 )
 
-from dotenv import load_dotenv
 from db import get_db_connection
 from auth import auth
 from admin import admin
+from ask import ask
+
+
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
 
 load_dotenv()
 
-# --------------------------------------------------
-# APPLICATION CONFIGURATION
-# --------------------------------------------------
-
 app = Flask(__name__)
 
-app.secret_key = os.getenv("SECRET_KEY", "change-this-secret-key")
+app.config["SECRET_KEY"] = os.getenv(
+    "SECRET_KEY",
+    "development-key-change-before-deployment"
+)
 
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -42,15 +47,19 @@ app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 logging.basicConfig(level=logging.INFO)
 logger = app.logger
 
+
+# ==========================================================
+# REGISTER BLUEPRINTS
+# ==========================================================
+
 app.register_blueprint(auth)
 app.register_blueprint(admin)
+app.register_blueprint(ask)
 
 
-# --------------------------------------------------
+# ==========================================================
 # GEMINI CONFIGURATION
-# --------------------------------------------------
-
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# ==========================================================
 
 GEMINI_MODELS = [
     "gemini-2.5-flash-lite",
@@ -65,16 +74,17 @@ GEMINI_API_URL = (
 )
 
 
-# --------------------------------------------------
+# ==========================================================
 # LOGIN DECORATORS
-# --------------------------------------------------
+# ==========================================================
 
 def login_required(func):
+
     @wraps(func)
     def wrapper(*args, **kwargs):
+
         if "user_id" not in session:
-            flash("Please login to continue.", "error")
-            return redirect(url_for("login"))
+            return redirect(url_for("login_page"))
 
         return func(*args, **kwargs)
 
@@ -82,13 +92,14 @@ def login_required(func):
 
 
 def student_required(func):
+
     @wraps(func)
     def wrapper(*args, **kwargs):
-        if "user_id" not in session:
-            flash("Please login to continue.", "error")
-            return redirect(url_for("login"))
 
-        if session.get("role") == "admin":
+        if "user_id" not in session:
+            return redirect(url_for("login_page"))
+
+        if session.get("role") != "user":
             return redirect("/admin/")
 
         return func(*args, **kwargs)
@@ -96,21 +107,23 @@ def student_required(func):
     return wrapper
 
 
-# --------------------------------------------------
+# ==========================================================
 # GEMINI API REQUEST
-# --------------------------------------------------
+# ==========================================================
 
 def call_gemini(model, prompt):
 
-    if not GEMINI_API_KEY:
-        raise RuntimeError(
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        raise ValueError(
             "GEMINI_API_KEY is missing from your .env file."
         )
 
     url = (
         GEMINI_API_URL.format(model=model)
         + "?key="
-        + GEMINI_API_KEY
+        + api_key
     )
 
     payload = {
@@ -134,44 +147,39 @@ def call_gemini(model, prompt):
     req = urllib.request.Request(
         url,
         data=data,
-        headers={
-            "Content-Type": "application/json"
-        },
+        headers={"Content-Type": "application/json"},
         method="POST"
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=45) as response:
-            response_data = response.read().decode("utf-8")
-            result = json.loads(response_data)
+
+        with urllib.request.urlopen(req, timeout=60) as response:
+            result = json.loads(
+                response.read().decode("utf-8")
+            )
 
         candidates = result.get("candidates", [])
 
         if not candidates:
-            raise ValueError(
-                "Gemini returned no response candidates."
-            )
+            raise ValueError("Gemini returned no candidates.")
 
-        parts = candidates[0].get("content", {}).get("parts", [])
+        parts = candidates[0].get(
+            "content", {}
+        ).get("parts", [])
 
         if not parts:
-            raise ValueError(
-                "Gemini returned an empty response."
-            )
+            raise ValueError("Gemini returned an empty response.")
 
         generated_text = parts[0].get("text", "")
 
         if not generated_text:
-            raise ValueError(
-                "Gemini returned empty generated text."
-            )
+            raise ValueError("Gemini returned empty text.")
 
         return generated_text
 
     except urllib.error.HTTPError as error:
 
-        # Read Google's actual error response.
-        error_body = error.read().decode(
+        details = error.read().decode(
             "utf-8",
             errors="replace"
         )
@@ -180,11 +188,11 @@ def call_gemini(model, prompt):
             "Gemini model %s returned HTTP %s. Response: %s",
             model,
             error.code,
-            error_body
+            details
         )
 
         raise RuntimeError(
-            f"Gemini HTTP {error.code}: {error_body}"
+            f"Gemini HTTP {error.code}: {details}"
         )
 
     except (
@@ -200,23 +208,23 @@ def call_gemini(model, prompt):
         )
 
         raise RuntimeError(
-            f"Connection failed: {error}"
+            f"Gemini connection failed: {error}"
         )
 
 
-# --------------------------------------------------
-# GENERATE AI CONTENT WITH MODEL FALLBACK
-# --------------------------------------------------
+# ==========================================================
+# GENERATE AI NOTES
+# ==========================================================
 
 def generate_ai_content(source_text):
 
     prompt = f"""
-You are NotePilot, an AI learning companion.
+You are NotePilot, an expert AI learning assistant.
 
-Analyze the following study material and generate useful
-study notes for a college student.
+Analyze the following study material and generate
+useful and understandable study notes.
 
-Return ONLY valid JSON in this exact structure:
+Return ONLY valid JSON using this structure:
 
 {{
     "summary": "A clear and detailed summary",
@@ -226,16 +234,16 @@ Return ONLY valid JSON in this exact structure:
         "Important point 3"
     ],
     "action_items": [
-        "Important concept to revise",
-        "Practice question or activity"
+        "Revision task 1",
+        "Practice task 2"
     ]
 }}
 
-Rules:
-1. Use simple and understandable language.
+Instructions:
+1. Use simple language.
 2. Preserve important technical terms.
-3. Do not invent information not present in the material.
-4. Make the summary useful for examination preparation.
+3. Do not invent information.
+4. Make the summary useful for college examinations.
 5. Return valid JSON only.
 
 STUDY MATERIAL:
@@ -248,44 +256,33 @@ STUDY MATERIAL:
     for model in GEMINI_MODELS:
 
         try:
+
             logger.info("Trying Gemini model: %s", model)
 
             generated_text = call_gemini(model, prompt)
-
-            # Remove Markdown code fences if returned.
             generated_text = generated_text.strip()
 
             if generated_text.startswith("```"):
-                generated_text = generated_text.replace(
-                    "```json", ""
-                ).replace("```", "").strip()
+                generated_text = (
+                    generated_text
+                    .replace("```json", "")
+                    .replace("```", "")
+                    .strip()
+                )
 
             result = json.loads(generated_text)
 
-            required_fields = [
-                "summary",
-                "key_points",
-                "action_items"
-            ]
+            if not isinstance(result.get("summary"), str):
+                raise ValueError("Invalid summary returned by AI.")
 
-            for field in required_fields:
-                if field not in result:
-                    raise ValueError(
-                        f"Missing field: {field}"
-                    )
+            if not isinstance(result.get("key_points"), list):
+                raise ValueError("Invalid key points returned by AI.")
 
-            if not isinstance(result["key_points"], list):
-                raise ValueError(
-                    "key_points must be a list."
-                )
-
-            if not isinstance(result["action_items"], list):
-                raise ValueError(
-                    "action_items must be a list."
-                )
+            if not isinstance(result.get("action_items"), list):
+                raise ValueError("Invalid action items returned by AI.")
 
             logger.info(
-                "Successfully generated notes using %s",
+                "Notes generated successfully using %s",
                 model
             )
 
@@ -293,142 +290,174 @@ STUDY MATERIAL:
 
         except Exception as error:
 
-            error_message = str(error)
-
             logger.error(
                 "Gemini model %s failed: %s",
                 model,
-                error_message
+                str(error)
             )
 
-            errors.append(
-                f"{model}: {error_message}"
-            )
+            errors.append(f"{model}: {str(error)}")
 
     logger.error(
         "All Gemini models failed: %s",
         "; ".join(errors)
     )
 
-    raise RuntimeError(
-        "All available Gemini models failed. "
-        "Check the VS Code terminal for the detailed API error."
+    raise ValueError(
+        "AI note generation failed. Check the VS Code terminal."
     )
 
 
-# --------------------------------------------------
+# ==========================================================
 # HOME PAGE
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/")
+@app.get("/")
 def home():
 
-    if "user_id" in session:
+    if session.get("role") == "admin":
+        return redirect("/admin/")
 
-        if session.get("role") == "admin":
-            return redirect("/admin/")
-
+    if session.get("role") == "user":
         return redirect("/dashboard")
 
-    return render_template("auth.html")
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>NotePilot</title>
+        <style>
+            body {
+                margin: 0;
+                min-height: 100vh;
+                display: grid;
+                place-items: center;
+                font-family: Arial, sans-serif;
+                background: #101426;
+                color: white;
+            }
+            main {
+                padding: 40px;
+                background: #1a2038;
+                border: 1px solid #343b59;
+                border-radius: 20px;
+            }
+            h1 { color: #a99bff; }
+            a { color: #c6bdff; }
+        </style>
+    </head>
+    <body>
+        <main>
+            <h1>NotePilot</h1>
+            <p>Your AI-powered learning companion.</p>
+            <a href="/login">Login / Register</a>
+        </main>
+    </body>
+    </html>
+    """
 
 
-# --------------------------------------------------
+# ==========================================================
 # LOGIN PAGE
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/login")
-def login():
+@app.get("/login")
+def login_page():
 
-    if "user_id" in session:
+    if session.get("role") == "admin":
+        return redirect("/admin/")
 
-        if session.get("role") == "admin":
-            return redirect("/admin/")
-
+    if session.get("role") == "user":
         return redirect("/dashboard")
 
     return render_template("auth.html")
 
 
-# --------------------------------------------------
+# ==========================================================
 # STUDENT DASHBOARD
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/dashboard")
+@app.get("/dashboard")
 @student_required
-def dashboard():
+def student_dashboard():
 
     connection = get_db_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
-                "SELECT COUNT(*) AS total FROM notes WHERE user_id = %s",
+                """
+                SELECT COUNT(*) AS total
+                FROM notes
+                WHERE user_id = %s
+                """,
                 (session["user_id"],)
             )
             total_notes = cursor.fetchone()["total"]
 
             cursor.execute(
-                "SELECT COUNT(*) AS total FROM quizzes WHERE user_id = %s",
-                (session["user_id"],)
-            )
-            total_quizzes = cursor.fetchone()["total"]
-
-            cursor.execute(
-                "SELECT COUNT(*) AS total FROM flashcards WHERE user_id = %s",
-                (session["user_id"],)
-            )
-            total_flashcards = cursor.fetchone()["total"]
-
-            cursor.execute(
                 """
-                SELECT AVG(score) AS average_score
+                SELECT COUNT(*) AS total
                 FROM quiz_attempts
                 WHERE user_id = %s
                 """,
                 (session["user_id"],)
             )
-            result = cursor.fetchone()
+            total_quizzes = cursor.fetchone()["total"]
 
-            average_score = result["average_score"] or 0
+            cursor.execute(
+                """
+                SELECT COALESCE(AVG(score), 0) AS average_score
+                FROM quiz_attempts
+                WHERE user_id = %s
+                """,
+                (session["user_id"],)
+            )
+            average_score = round(
+                float(cursor.fetchone()["average_score"]),
+                1
+            )
+
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM flashcards f
+                JOIN notes n ON n.id = f.note_id
+                WHERE n.user_id = %s
+                """,
+                (session["user_id"],)
+            )
+            total_flashcards = cursor.fetchone()["total"]
 
         return render_template(
             "student_dashboard.html",
             user_name=session.get("user_name", "Student"),
             total_notes=total_notes,
             total_quizzes=total_quizzes,
-            average_score=round(float(average_score), 2),
+            average_score=average_score,
             total_flashcards=total_flashcards
-        )
-
-    except Exception:
-        logger.exception("Student dashboard failed")
-        flash("Unable to load dashboard.", "error")
-        return render_template(
-            "student_dashboard.html",
-            user_name=session.get("user_name", "Student"),
-            total_notes=0,
-            total_quizzes=0,
-            average_score=0,
-            total_flashcards=0
         )
 
     finally:
         connection.close()
 
 
-# --------------------------------------------------
+# ==========================================================
 # NOTES PAGE
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/notes")
+@app.get("/notes")
 @student_required
 def notes():
 
     connection = get_db_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
@@ -448,93 +477,151 @@ def notes():
             notes=notes_list
         )
 
-    except Exception:
-        logger.exception("Loading notes failed")
-        flash("Unable to load your notes.", "error")
+    finally:
+        connection.close()
 
-        return render_template(
-            "notes.html",
-            notes=[]
-        )
+
+# ==========================================================
+# AJAX SEARCH AND FILTER SAVED NOTES
+# ==========================================================
+
+@app.get("/api/notes/search")
+@student_required
+def search_notes():
+
+    search_query = request.args.get(
+        "q", ""
+    ).strip()
+
+    connection = get_db_connection()
+
+    try:
+
+        with connection.cursor() as cursor:
+
+            cursor.execute(
+                """
+                SELECT id, title, summary, created_at
+                FROM notes
+                WHERE user_id = %s
+                  AND title LIKE %s
+                ORDER BY created_at DESC
+                """,
+                (
+                    session["user_id"],
+                    f"%{search_query}%"
+                )
+            )
+
+            results = cursor.fetchall()
+
+        notes_data = []
+
+        for note in results:
+
+            created_at = note["created_at"]
+
+            if created_at:
+                created_at = str(created_at)
+            else:
+                created_at = ""
+
+            summary = note.get("summary") or ""
+
+            notes_data.append({
+                "id": note["id"],
+                "title": note["title"],
+                "summary": summary[:250],
+                "created_at": created_at
+            })
+
+        return jsonify({
+            "success": True,
+            "count": len(notes_data),
+            "notes": notes_data
+        }), 200
+
+    except Exception:
+
+        logger.exception("AJAX note search failed")
+
+        return jsonify({
+            "success": False,
+            "error": "Unable to search notes."
+        }), 500
 
     finally:
         connection.close()
 
 
-# --------------------------------------------------
+# ==========================================================
 # GENERATE NOTES
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/notes/generate", methods=["POST"])
+@app.post("/notes/generate")
 @student_required
 def generate_notes():
 
     title = request.form.get("title", "").strip()
     source_text = request.form.get("source_text", "").strip()
-
     uploaded_file = request.files.get("study_file")
 
-    # Read uploaded TXT file.
     if uploaded_file and uploaded_file.filename:
 
         if not uploaded_file.filename.lower().endswith(".txt"):
             flash(
-                "Only TXT files are supported currently.",
+                "Currently, only TXT files are supported.",
                 "error"
             )
             return redirect(url_for("notes"))
 
         try:
-            file_content = uploaded_file.read().decode(
+            source_text = uploaded_file.read().decode(
                 "utf-8",
                 errors="replace"
-            )
-
-            source_text = file_content.strip()
+            ).strip()
 
         except Exception:
-            flash("Unable to read the uploaded file.", "error")
+            flash("Unable to read this text file.", "error")
             return redirect(url_for("notes"))
 
     if not title:
         title = "Untitled Study Notes"
 
     if not source_text:
-        flash("Please enter or upload study material.", "error")
+        flash(
+            "Please enter or upload study material.",
+            "error"
+        )
         return redirect(url_for("notes"))
 
     if len(source_text) > 30000:
         flash(
-            "Study material is too long. Maximum allowed is 30,000 characters.",
+            "Study material must be under 30,000 characters.",
             "error"
         )
         return redirect(url_for("notes"))
 
-    # Generate AI content.
     try:
         ai_result = generate_ai_content(source_text)
 
-    except Exception as error:
-
+    except Exception:
         logger.exception("AI notes generation failed")
-
         flash(
-            "AI note generation failed. Check the VS Code terminal for details.",
+            "AI note generation failed. Check the VS Code terminal.",
             "error"
         )
-
         return redirect(url_for("notes"))
 
-    # Save generated notes in MySQL.
     connection = get_db_connection()
 
     try:
+
         with connection.cursor() as cursor:
 
             cursor.execute(
                 """
-                INSERT INTO notes
-                (
+                INSERT INTO notes (
                     user_id,
                     title,
                     source_text,
@@ -558,43 +645,52 @@ def generate_notes():
 
         connection.commit()
 
-        flash("Your AI notes were generated successfully!", "success")
+        flash(
+            "Your AI notes were generated successfully!",
+            "success"
+        )
 
         return redirect(url_for("notes"))
 
     except Exception:
-
         connection.rollback()
-
         logger.exception("Saving generated notes failed")
-
         flash(
-            "Notes were generated but could not be saved to the database.",
+            "Could not save your notes. Please try again.",
             "error"
         )
-
         return redirect(url_for("notes"))
 
     finally:
         connection.close()
 
 
-# --------------------------------------------------
-# VIEW INDIVIDUAL NOTE
-# --------------------------------------------------
+# ==========================================================
+# VIEW SAVED NOTE
+# ==========================================================
 
-@app.route("/notes/<int:note_id>")
+@app.get("/notes/<int:note_id>")
 @student_required
 def view_note(note_id):
 
-    connection = get_db_connection()
+    connection = None
 
     try:
+
+        connection = get_db_connection()
+
         with connection.cursor() as cursor:
 
             cursor.execute(
                 """
-                SELECT *
+                SELECT
+                    id,
+                    title,
+                    source_text,
+                    summary,
+                    key_points,
+                    action_items,
+                    created_at
                 FROM notes
                 WHERE id = %s AND user_id = %s
                 """,
@@ -604,22 +700,36 @@ def view_note(note_id):
             note = cursor.fetchone()
 
         if not note:
-            flash("Note not found.", "error")
+            flash(
+                "Note not found or you do not have access.",
+                "error"
+            )
             return redirect(url_for("notes"))
 
-        try:
-            note["key_points"] = json.loads(
-                note["key_points"] or "[]"
-            )
-        except (TypeError, json.JSONDecodeError):
-            note["key_points"] = []
+        for field in ("key_points", "action_items"):
 
-        try:
-            note["action_items"] = json.loads(
-                note["action_items"] or "[]"
-            )
-        except (TypeError, json.JSONDecodeError):
-            note["action_items"] = []
+            value = note.get(field)
+
+            if isinstance(value, str):
+                try:
+                    note[field] = json.loads(value)
+                except (ValueError, TypeError):
+                    note[field] = []
+
+            elif not isinstance(value, list):
+                note[field] = []
+
+        if note.get("source_text") is None:
+            note["source_text"] = ""
+
+        if note.get("summary") is None:
+            note["summary"] = ""
+
+        logger.info(
+            "Opening note ID %s for user ID %s",
+            note_id,
+            session["user_id"]
+        )
 
         return render_template(
             "note_detail.html",
@@ -627,97 +737,101 @@ def view_note(note_id):
         )
 
     except Exception:
-        logger.exception("Opening note failed")
-        flash("Unable to open this note.", "error")
+        logger.exception(
+            "VIEW NOTE ERROR - Note ID: %s",
+            note_id
+        )
+        flash(
+            "Unable to open this note. Check the VS Code terminal.",
+            "error"
+        )
         return redirect(url_for("notes"))
 
     finally:
-        connection.close()
+
+        if connection is not None:
+            connection.close()
 
 
-# --------------------------------------------------
+# ==========================================================
 # LOGOUT
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/logout")
-def logout():
+@app.get("/logout")
+def logout_page():
 
     session.clear()
-
-    flash("You have been logged out.", "success")
-
-    return redirect(url_for("login"))
+    return redirect(url_for("login_page"))
 
 
-# --------------------------------------------------
+# ==========================================================
 # HEALTH CHECK
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/health")
-def health():
+@app.get("/health")
+def health_check():
 
-    return jsonify({
-        "status": "running",
-        "application": "NotePilot",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    })
+    return jsonify(
+        status="ok",
+        application="NotePilot",
+        timestamp=datetime.now(timezone.utc).isoformat()
+    ), 200
 
 
-# --------------------------------------------------
+# ==========================================================
 # DATABASE CHECK
-# --------------------------------------------------
+# ==========================================================
 
-@app.route("/db-check")
-def db_check():
+@app.get("/db-check")
+def database_check():
 
     connection = None
 
     try:
+
         connection = get_db_connection()
 
         with connection.cursor() as cursor:
             cursor.execute("SELECT DATABASE() AS database_name")
             result = cursor.fetchone()
 
-        return jsonify({
-            "status": "connected",
-            "database": result["database_name"]
-        })
+        return jsonify(
+            status="connected",
+            database=result["database_name"]
+        ), 200
 
-    except Exception as error:
-
+    except Exception:
         logger.exception("Database connection failed")
-
-        return jsonify({
-            "status": "error",
-            "message": str(error)
-        }), 500
+        return jsonify(status="not_connected"), 503
 
     finally:
-        if connection:
+
+        if connection is not None:
             connection.close()
 
 
-# --------------------------------------------------
+# ==========================================================
 # FILE SIZE ERROR
-# --------------------------------------------------
+# ==========================================================
 
 @app.errorhandler(413)
 def file_too_large(error):
 
-    flash("Uploaded file is too large. Maximum size is 5 MB.", "error")
+    return (
+        "File is too large. Maximum upload size is 5 MB.",
+        413
+    )
 
-    return redirect(url_for("notes"))
 
-
-# --------------------------------------------------
+# ==========================================================
 # APPLICATION START
-# --------------------------------------------------
+# ==========================================================
 
 if __name__ == "__main__":
 
     app.run(
         host="127.0.0.1",
-        port=5000,
-        debug=True
+        port=int(os.getenv("PORT", "5000")),
+        debug=os.getenv("FLASK_DEBUG", "1").lower()
+        in {"1", "true", "yes"}
     )

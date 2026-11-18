@@ -1,0 +1,460 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NotePilot | AI Notes</title>
+
+<style>
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 30px;
+    font-family: Arial, sans-serif;
+    background: #101426;
+    color: #f4f5fb;
+}
+
+.container {
+    max-width: 1100px;
+    margin: auto;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 30px;
+}
+
+h1 {
+    color: #a99bff;
+}
+
+a {
+    color: #c6bdff;
+    text-decoration: none;
+}
+
+a:hover {
+    color: #ffffff;
+}
+
+.panel {
+    background: #1a2038;
+    border: 1px solid #343b59;
+    border-radius: 16px;
+    padding: 25px;
+    margin-bottom: 25px;
+}
+
+input, textarea {
+    width: 100%;
+    padding: 14px;
+    margin: 10px 0 18px;
+    background: #101426;
+    color: white;
+    border: 1px solid #454d70;
+    border-radius: 8px;
+    font-family: Arial, sans-serif;
+}
+
+input:focus, textarea:focus {
+    outline: 1px solid #a99bff;
+    border-color: #a99bff;
+}
+
+textarea {
+    min-height: 200px;
+    resize: vertical;
+}
+
+label {
+    color: #cbd0e3;
+}
+
+button {
+    padding: 13px 22px;
+    border: 0;
+    border-radius: 8px;
+    background: #806ee8;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+button:hover {
+    background: #a18dfc;
+}
+
+.message {
+    padding: 14px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    background: #302c55;
+}
+
+.error {
+    background: #552d37;
+}
+
+.success {
+    background: #174c3a;
+}
+
+.search-area {
+    margin: 20px 0;
+}
+
+.search-area input {
+    margin-bottom: 8px;
+}
+
+.search-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.note {
+    padding: 18px;
+    background: #252b48;
+    border-radius: 10px;
+    margin-top: 12px;
+    border: 1px solid transparent;
+}
+
+.note:hover {
+    border-color: #6657b5;
+}
+
+.note h3 {
+    margin-top: 0;
+    overflow-wrap: anywhere;
+}
+
+.note p {
+    line-height: 1.5;
+}
+
+.muted {
+    color: #aeb5cc;
+    font-size: 13px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 35px 15px;
+    color: #aeb5cc;
+    background: #151b30;
+    border-radius: 10px;
+}
+
+#searchStatus {
+    color: #aeb5cc;
+    font-size: 13px;
+}
+
+@media(max-width: 600px) {
+    body {
+        padding: 15px;
+    }
+
+    .panel {
+        padding: 18px;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<header>
+    <div>
+        <h1>NotePilot</h1>
+        <p>Your AI-powered study notes.</p>
+    </div>
+
+    <a href="/dashboard">← Back to Dashboard</a>
+</header>
+
+
+<!-- GENERATE AI NOTES -->
+
+<section class="panel">
+
+    <h2>Generate AI Notes</h2>
+
+    <p class="muted">
+        Enter your study material or upload a TXT file.
+        Gemini AI will generate your summary, key points and action items.
+    </p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="message {{ category }}">
+                {{ message }}
+            </div>
+        {% endfor %}
+    {% endwith %}
+
+    <form action="/notes/generate"
+          method="POST"
+          enctype="multipart/form-data">
+
+        <label>Note Title</label>
+
+        <input
+            type="text"
+            name="title"
+            placeholder="Example: Introduction to Machine Learning"
+            maxlength="255"
+            required
+        >
+
+        <label>Study Material</label>
+
+        <textarea
+            name="source_text"
+            placeholder="Paste your lecture notes or study material here..."
+        ></textarea>
+
+        <label>Or upload a TXT file</label>
+
+        <input
+            type="file"
+            name="study_file"
+            accept=".txt"
+        >
+
+        <button type="submit">Generate AI Notes</button>
+
+    </form>
+
+</section>
+
+
+<!-- SAVED NOTES WITH AJAX SEARCH -->
+
+<section class="panel">
+
+    <h2>My Saved Notes</h2>
+
+    <p class="muted">
+        Search your saved study notes by title without reloading the page.
+    </p>
+
+    <div class="search-area">
+
+        <label for="noteSearch">Search Saved Notes</label>
+
+        <input
+            type="search"
+            id="noteSearch"
+            placeholder="Type a note title to search..."
+            autocomplete="off"
+        >
+
+    </div>
+
+    <div class="search-info">
+
+        <span class="muted" id="resultCount">
+            {{ notes|length }} saved notes
+        </span>
+
+        <span id="searchStatus" aria-live="polite"></span>
+
+    </div>
+
+    <div id="notesContainer">
+
+        {% for note in notes %}
+
+            <div class="note">
+
+                <h3>{{ note.title }}</h3>
+
+                <p>
+                    {{ note.summary[:250] if note.summary else 'No summary available' }}...
+                </p>
+
+                <p class="muted">
+                    Created: {{ note.created_at }}
+                </p>
+
+                <a href="/notes/{{ note.id }}">
+                    View Full Notes →
+                </a>
+
+            </div>
+
+        {% else %}
+
+            <div class="empty-state">
+                <p>No notes generated yet.</p>
+                <p>Create your first AI note above.</p>
+            </div>
+
+        {% endfor %}
+
+    </div>
+
+</section>
+
+</div>
+
+
+<script>
+const searchInput = document.getElementById("noteSearch");
+const notesContainer = document.getElementById("notesContainer");
+const resultCount = document.getElementById("resultCount");
+const searchStatus = document.getElementById("searchStatus");
+
+let searchTimer = null;
+let activeRequest = null;
+
+
+function createNoteCard(note) {
+
+    const card = document.createElement("div");
+    card.className = "note";
+
+    const title = document.createElement("h3");
+    title.textContent = note.title || "Untitled Note";
+
+    const summary = document.createElement("p");
+    summary.textContent = note.summary || "No summary available";
+
+    const created = document.createElement("p");
+    created.className = "muted";
+    created.textContent = "Created: " + (note.created_at || "Unknown");
+
+    const link = document.createElement("a");
+    link.href = "/notes/" + encodeURIComponent(note.id);
+    link.textContent = "View Full Notes →";
+
+    card.appendChild(title);
+    card.appendChild(summary);
+    card.appendChild(created);
+    card.appendChild(link);
+
+    return card;
+}
+
+
+function showEmptyMessage(message) {
+
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+
+    const paragraph = document.createElement("p");
+    paragraph.textContent = message;
+
+    empty.appendChild(paragraph);
+
+    notesContainer.replaceChildren(empty);
+}
+
+
+async function searchNotes(query) {
+
+    if (activeRequest) {
+        activeRequest.abort();
+    }
+
+    activeRequest = new AbortController();
+
+    searchStatus.textContent = "Searching...";
+
+    try {
+
+        const response = await fetch(
+            "/api/notes/search?q=" + encodeURIComponent(query),
+            {
+                method: "GET",
+                credentials: "same-origin",
+                headers: {
+                    "Accept": "application/json"
+                },
+                signal: activeRequest.signal
+            }
+        );
+
+        if (!response.ok) {
+            throw new Error("Search request failed: " + response.status);
+        }
+
+        const data = await response.json();
+
+        if (!data.success) {
+            throw new Error(data.error || "Unable to search notes.");
+        }
+
+        notesContainer.replaceChildren();
+
+        resultCount.textContent =
+            data.count + (data.count === 1 ? " note found" : " notes found");
+
+        if (data.notes.length === 0) {
+
+            showEmptyMessage(
+                query
+                    ? "No notes found matching your search."
+                    : "No notes generated yet. Create your first AI note above."
+            );
+
+        } else {
+
+            data.notes.forEach(function(note) {
+                notesContainer.appendChild(createNoteCard(note));
+            });
+
+        }
+
+        searchStatus.textContent = "";
+
+    } catch (error) {
+
+        if (error.name === "AbortError") {
+            return;
+        }
+
+        console.error("AJAX search error:", error);
+
+        searchStatus.textContent = "Search failed. Please try again.";
+
+    }
+}
+
+
+searchInput.addEventListener("input", function() {
+
+    clearTimeout(searchTimer);
+
+    const query = searchInput.value.trim();
+
+    searchTimer = setTimeout(function() {
+        searchNotes(query);
+    }, 300);
+
+});
+
+
+// Load current user's notes through AJAX when the page opens.
+searchNotes("");
+
+</script>
+
+</body>
+</html>
