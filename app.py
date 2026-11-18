@@ -25,6 +25,7 @@ from db import get_db_connection
 from auth import auth
 from admin import admin
 from ask import ask
+from quiz import quiz_bp
 
 
 # ==========================================================
@@ -55,6 +56,7 @@ logger = app.logger
 app.register_blueprint(auth)
 app.register_blueprint(admin)
 app.register_blueprint(ask)
+app.register_blueprint(quiz_bp)
 
 
 # ==========================================================
@@ -376,7 +378,7 @@ def login_page():
 
 
 # ==========================================================
-# STUDENT DASHBOARD
+# STUDENT DASHBOARD WITH CHART.JS ANALYTICS
 # ==========================================================
 
 @app.get("/dashboard")
@@ -386,9 +388,9 @@ def student_dashboard():
     connection = get_db_connection()
 
     try:
-
         with connection.cursor() as cursor:
 
+            # Main dashboard totals
             cursor.execute(
                 """
                 SELECT COUNT(*) AS total
@@ -409,16 +411,26 @@ def student_dashboard():
             )
             total_quizzes = cursor.fetchone()["total"]
 
+            # quiz_attempts.score is measured against total_questions.
             cursor.execute(
                 """
-                SELECT COALESCE(AVG(score), 0) AS average_score
+                SELECT COALESCE(
+                    AVG(
+                        CASE
+                            WHEN total_questions > 0
+                            THEN (score / total_questions) * 100
+                            ELSE 0
+                        END
+                    ),
+                    0
+                ) AS average_score
                 FROM quiz_attempts
                 WHERE user_id = %s
                 """,
                 (session["user_id"],)
             )
             average_score = round(
-                float(cursor.fetchone()["average_score"]),
+                float(cursor.fetchone()["average_score"] or 0),
                 1
             )
 
@@ -433,13 +445,103 @@ def student_dashboard():
             )
             total_flashcards = cursor.fetchone()["total"]
 
+            # Notes created per month, covering the latest six months.
+            cursor.execute(
+                """
+                SELECT
+                    DATE_FORMAT(created_at, '%%b %%Y') AS month_label,
+                    DATE_FORMAT(created_at, '%%Y-%%m') AS month_sort,
+                    COUNT(*) AS total
+                FROM notes
+                WHERE user_id = %s
+                  AND created_at >= DATE_SUB(
+                      CURDATE(), INTERVAL 5 MONTH
+                  )
+                GROUP BY YEAR(created_at), MONTH(created_at),
+                         DATE_FORMAT(created_at, '%%b %%Y'),
+                         DATE_FORMAT(created_at, '%%Y-%%m')
+                ORDER BY month_sort ASC
+                """,
+                (session["user_id"],)
+            )
+            monthly_notes = cursor.fetchall()
+
+            # Most recent quiz attempts, converted to percentages.
+            cursor.execute(
+                """
+                SELECT score, total_questions, attempted_at
+                FROM quiz_attempts
+                WHERE user_id = %s
+                ORDER BY attempted_at DESC
+                LIMIT 8
+                """,
+                (session["user_id"],)
+            )
+            quiz_rows = cursor.fetchall()
+
+            # Counts used by the learning activity doughnut chart.
+            cursor.execute(
+                """
+                SELECT COUNT(*) AS total
+                FROM flashcards f
+                JOIN notes n ON n.id = f.note_id
+                WHERE n.user_id = %s
+                """,
+                (session["user_id"],)
+            )
+            flashcard_activity = cursor.fetchone()["total"]
+
+        notes_chart_labels = [
+            row["month_label"] for row in monthly_notes
+        ]
+        notes_chart_values = [
+            int(row["total"]) for row in monthly_notes
+        ]
+
+        quiz_rows = list(reversed(quiz_rows))
+        quiz_chart_labels = []
+        quiz_chart_values = []
+
+        for index, row in enumerate(quiz_rows, start=1):
+            attempted_at = row.get("attempted_at")
+            if attempted_at:
+                try:
+                    label = attempted_at.strftime("%d %b")
+                except (AttributeError, ValueError):
+                    label = f"Attempt {index}"
+            else:
+                label = f"Attempt {index}"
+
+            total_questions = int(row.get("total_questions") or 0)
+            score = int(row.get("score") or 0)
+            percentage = (
+                round((score / total_questions) * 100, 1)
+                if total_questions > 0 else 0
+            )
+
+            quiz_chart_labels.append(label)
+            quiz_chart_values.append(percentage)
+
+        activity_labels = ["Notes", "Quiz attempts", "Flashcards"]
+        activity_values = [
+            int(total_notes),
+            int(total_quizzes),
+            int(flashcard_activity)
+        ]
+
         return render_template(
             "student_dashboard.html",
             user_name=session.get("user_name", "Student"),
             total_notes=total_notes,
             total_quizzes=total_quizzes,
             average_score=average_score,
-            total_flashcards=total_flashcards
+            total_flashcards=total_flashcards,
+            notes_chart_labels=notes_chart_labels,
+            notes_chart_values=notes_chart_values,
+            quiz_chart_labels=quiz_chart_labels,
+            quiz_chart_values=quiz_chart_values,
+            activity_labels=activity_labels,
+            activity_values=activity_values
         )
 
     finally:
