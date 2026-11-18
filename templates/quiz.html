@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NotePilot | Quiz Centre</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:30px;font-family:Arial,sans-serif;background:#101426;color:#f4f5fb}
+.container{max-width:1100px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;margin-bottom:28px}
+h1{color:#a99bff}a{color:#c6bdff;text-decoration:none}.panel{background:#1a2038;border:1px solid #343b59;border-radius:15px;padding:24px;margin-bottom:22px}
+.note{background:#252b48;border-radius:10px;padding:17px;margin-top:12px;display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap}
+button{background:#806ee8;color:white;border:0;border-radius:8px;padding:12px 18px;font-weight:bold;cursor:pointer}
+button:hover{background:#a18dfc}.muted{color:#aeb5cc;font-size:13px}.message{padding:13px;border-radius:8px;margin:10px 0;background:#552d37}
+table{width:100%;border-collapse:collapse;margin-top:15px}th,td{text-align:left;padding:12px;border-bottom:1px solid #343b59}th{color:#c6bdff}
+@media(max-width:600px){body{padding:15px}.panel{padding:17px}table{font-size:12px}}
+</style>
+</head>
+<body><main class="container">
+<header><div><h1>NotePilot Quiz Centre</h1><p class="muted">Generate and take quizzes from your saved study notes.</p></div><a href="/dashboard">← Back to Dashboard</a></header>
+{% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="message">{{ message }}</div>{% endfor %}{% endwith %}
+<section class="panel">
+<h2>Generate a New Quiz</h2><p class="muted">Choose a saved note. Gemini will create 10 multiple-choice questions from its original study material.</p>
+{% for note in notes %}
+<div class="note"><div><strong>{{ note.title }}</strong><p class="muted">Note ID: {{ note.id }}</p></div>
+<form method="POST" action="{{ url_for('quiz_bp.generate', note_id=note.id) }}"><button type="submit">Generate 10 Questions</button></form></div>
+{% else %}<p class="muted">You have no saved notes yet. Generate notes first.</p>{% endfor %}
+</section>
+<section class="panel"><h2>Recent Quiz Attempts</h2>
+{% if attempts %}
+<table><thead><tr><th>Study note</th><th>Score</th><th>Attempted</th></tr></thead><tbody>
+{% for attempt in attempts %}<tr><td>{{ attempt.note_title }}</td><td>{{ attempt.score }}/{{ attempt.total_questions }} ({{ ((attempt.score / attempt.total_questions) * 100)|round(1) if attempt.total_questions else 0 }}%)</td><td>{{ attempt.attempted_at }}</td></tr>{% endfor %}
+</tbody></table>
+{% else %}<p class="muted">No quiz attempts yet. Generate your first quiz above.</p>{% endif %}
+</section></main></body></html>
